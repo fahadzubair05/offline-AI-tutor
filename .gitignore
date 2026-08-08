@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Ingested source pdfs (keep folder, ignore contents)
+data/pdfs/*
+!data/pdfs/.gitkeep
+
+# Persisted vector store
+data/chroma_db/
+
+.DS_Store
