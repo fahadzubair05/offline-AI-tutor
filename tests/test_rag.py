@@ -13,6 +13,26 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from langchain_core.documents import Document
 from rag.splitter import split_documents
+from rag.vectorstore import sanitize_collection_name
+
+
+def test_sanitize_collection_name_basic():
+    assert sanitize_collection_name("my resume.pdf") == "my_resume"
+
+
+def test_sanitize_collection_name_special_chars():
+    assert sanitize_collection_name("Q3 Report (final).pdf") == "q3_report_final"
+
+
+def test_sanitize_collection_name_short_name_padded():
+    # Chroma requires >= 3 chars; short/odd names should still be valid
+    result = sanitize_collection_name("a.pdf")
+    assert len(result) >= 3
+
+
+def test_sanitize_collection_name_is_stable():
+    # Same filename should always produce the same collection name
+    assert sanitize_collection_name("notes.pdf") == sanitize_collection_name("notes.pdf")
 
 
 def test_split_documents_basic():
