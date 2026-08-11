@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from langchain_core.documents import Document
 from rag.splitter import split_documents
 from rag.vectorstore import sanitize_collection_name
+import rag.subjects as subjects
 
 
 def test_sanitize_collection_name_basic():
@@ -60,3 +61,34 @@ def test_split_documents_preserves_metadata():
 
 def test_split_documents_empty_input():
     assert split_documents([]) == []
+
+
+def test_build_collection_name_avoids_cross_subject_collision(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    cn_a = subjects.build_collection_name("Biology 101", "notes.pdf")
+    cn_b = subjects.build_collection_name("Q3 Finance", "notes.pdf")
+
+    assert cn_a != cn_b
+
+
+def test_subject_registry_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    name = subjects.register_subject("  Biology 101  ")
+    assert name == "Biology 101"
+    assert "Biology 101" in subjects.list_subjects()
+
+    cn = subjects.build_collection_name("Biology 101", "Chapter 1.pdf")
+    subjects.add_pdf_to_subject("Biology 101", cn, "Chapter 1.pdf")
+
+    pdfs = subjects.get_subject_pdfs("Biology 101")
+    assert pdfs == {cn: "Chapter 1.pdf"}
+    assert subjects.find_subject_for_pdf(cn) == "Biology 101"
+
+    subjects.remove_pdf_from_subject("Biology 101", cn)
+    assert subjects.get_subject_pdfs("Biology 101") == {}
+
+    removed = subjects.delete_subject("Biology 101")
+    assert removed == []
+    assert "Biology 101" not in subjects.list_subjects()
