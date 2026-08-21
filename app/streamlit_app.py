@@ -33,6 +33,7 @@ from rag.vectorstore import (
     load_all_vectorstores,
     list_collections,
     delete_collection,
+    get_all_documents,
 )
 from rag.subjects import (
     list_subjects,
@@ -45,7 +46,12 @@ from rag.subjects import (
 )
 from rag.retriever import get_retriever, get_multi_retriever
 from llm.llm_ollama import get_llm, DEFAULT_MODEL
-from llm.chain import answer_with_sources
+from llm.chain import (
+    stream_rag_answer,
+    docs_to_sources,
+    summarize_chunks,
+    is_summary_request,
+)
 
 PDF_UPLOAD_DIR = Path("data/pdfs")
 
@@ -247,6 +253,61 @@ def _build_retriever(selected_pdfs: list):
     return get_multi_retriever(scoped_stores)
 
 
+def _summarize_selected(selected_pdfs: list, name_by_collection: dict, status) -> str:
+    """
+    Summarize the selected PDF(s) by reading through their full content
+    (map-reduce), not by similarity search — see llm/chain.py for why.
+    Reports live progress to the given st.status container so the person
+    can see it's actively working through the document, not stalled.
+    """
+    llm = _cached_llm(DEFAULT_MODEL)
+
+    if len(selected_pdfs) == 1:
+        chunks = get_all_documents(selected_pdfs[0])
+        return summarize_chunks(chunks, llm, progress_callback=status.write)
+
+    parts = []
+    for collection_name in selected_pdfs:
+        display_name = name_by_collection.get(collection_name, collection_name)
+        status.write(f"Reading '{display_name}'...")
+        chunks = get_all_documents(collection_name)
+        summary = summarize_chunks(chunks, llm, progress_callback=status.write)
+        parts.append(f"**{display_name}**\n\n{summary}")
+
+    return "\n\n---\n\n".join(parts)
+
+
+def _process_question(question: str, selected_pdfs: list, name_by_collection: dict):
+    """Shared handling for both typed questions and the Summarize button."""
+    st.session_state.messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    with st.chat_message("assistant"):
+        if is_summary_request(question):
+            with st.status("Reading through the document(s)...", expanded=True) as status:
+                answer_text = _summarize_selected(selected_pdfs, name_by_collection, status)
+                status.update(label="Summary ready ✅", state="complete")
+            st.markdown(answer_text)
+            sources = []
+        else:
+            retriever = _build_retriever(selected_pdfs)
+            llm = _cached_llm(DEFAULT_MODEL)
+            token_stream, docs = stream_rag_answer(retriever, llm, question)
+            answer_text = st.write_stream(token_stream)
+            sources = docs_to_sources(docs)
+            if sources:
+                with st.expander("Sources used"):
+                    for src in sources:
+                        display_name = name_by_collection.get(src["pdf"], src["pdf"])
+                        st.markdown(f"**{display_name}** — page {src['page']}")
+                        st.caption(src["text"] + "...")
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer_text, "sources": sources}
+    )
+
+
 def render_chat(subject: str, selected_pdfs: list, name_by_collection: dict):
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
@@ -258,38 +319,31 @@ def render_chat(subject: str, selected_pdfs: list, name_by_collection: dict):
                         st.markdown(f"**{display_name}** — page {src['page']}")
                         st.caption(src["text"] + "...")
 
-    question = st.chat_input(
+    col1, col2 = st.columns([1, 5])
+    summarize_clicked = col1.button(
+        "📝 Summarize", disabled=not selected_pdfs, use_container_width=True
+    )
+
+    question = col2.chat_input(
         f"Ask something about your PDFs in '{subject}'..."
         if selected_pdfs
         else "Ingest a PDF into this subject first to start asking questions"
     )
 
+    if summarize_clicked:
+        if not selected_pdfs:
+            st.warning("No PDFs available in this subject. Ingest one from the sidebar first.")
+        else:
+            _process_question(
+                "Please provide a summary of the document(s).", selected_pdfs, name_by_collection
+            )
+            st.rerun()
+
     if question:
         if not selected_pdfs:
             st.warning("No PDFs available in this subject. Ingest one from the sidebar first.")
-            return
-
-        st.session_state.messages.append({"role": "user", "content": question})
-        with st.chat_message("user"):
-            st.markdown(question)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                retriever = _build_retriever(selected_pdfs)
-                llm = _cached_llm(DEFAULT_MODEL)
-                result = answer_with_sources(retriever, llm, question)
-
-            st.markdown(result["answer"])
-            if result["sources"]:
-                with st.expander("Sources used"):
-                    for src in result["sources"]:
-                        display_name = name_by_collection.get(src["pdf"], src["pdf"])
-                        st.markdown(f"**{display_name}** — page {src['page']}")
-                        st.caption(src["text"] + "...")
-
-        st.session_state.messages.append(
-            {"role": "assistant", "content": result["answer"], "sources": result["sources"]}
-        )
+        else:
+            _process_question(question, selected_pdfs, name_by_collection)
 
 
 def render_clear_chat_button():

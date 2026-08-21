@@ -15,6 +15,65 @@ from langchain_core.documents import Document
 from rag.splitter import split_documents
 from rag.vectorstore import sanitize_collection_name
 import rag.subjects as subjects
+from llm.chain import summarize_chunks, is_summary_request
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeSummarizeLLM:
+    """Mimics ChatOllama's .invoke() interface for summarization tests."""
+
+    def __init__(self):
+        self.calls = []
+
+    def invoke(self, prompt):
+        self.calls.append(prompt)
+        text = str(prompt)
+        if "partial summaries" in text:
+            return _FakeResponse("FINAL COMBINED SUMMARY")
+        if "Summarize the following excerpt" in text:
+            return _FakeResponse("PARTIAL SUMMARY")
+        return _FakeResponse("normal answer")
+
+
+def test_is_summary_request_detects_summary_phrasing():
+    assert is_summary_request("Can you summarize this document?")
+    assert is_summary_request("give me a tl;dr")
+    assert is_summary_request("What are the key points?")
+
+
+def test_is_summary_request_ignores_normal_questions():
+    assert not is_summary_request("What is the capital of France?")
+
+
+def test_summarize_chunks_single_batch_skips_combine_step():
+    chunks = [Document(page_content="Short text.", metadata={"page": 0, "chunk_id": 0})]
+    llm = _FakeSummarizeLLM()
+
+    result = summarize_chunks(chunks, llm, max_chars_per_batch=6000)
+
+    assert result == "PARTIAL SUMMARY"
+    assert len(llm.calls) == 1  # no combine call needed for a single batch
+
+
+def test_summarize_chunks_multi_batch_uses_combine_step():
+    chunks = [
+        Document(page_content="x" * 5000, metadata={"page": i, "chunk_id": 0}) for i in range(3)
+    ]
+    llm = _FakeSummarizeLLM()
+
+    result = summarize_chunks(chunks, llm, max_chars_per_batch=6000)
+
+    assert result == "FINAL COMBINED SUMMARY"
+    assert len(llm.calls) > 1  # multiple batch summaries + one combine call
+
+
+def test_summarize_chunks_empty_input():
+    result = summarize_chunks([], _FakeSummarizeLLM())
+    assert "no content" in result.lower()
 
 
 def test_sanitize_collection_name_basic():

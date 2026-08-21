@@ -1,8 +1,10 @@
 {
   "Chemistry": {
-    "chemistry_pdf1": "pdf1.pdf"
+    "chemistry_pdf1": "pdf1.pdf",
+    "chemistry_the_boeing_737_case_study": "The Boeing 737 Case Study.pdf"
   },
   "math": {
     "math_pdf1": "pdf1.pdf"
-  }
+  },
+  "TBW": {}
 }

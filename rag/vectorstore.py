@@ -147,6 +147,36 @@ def load_all_vectorstores(
     return stores
 
 
+def get_all_documents(
+    collection_name: str,
+    persist_dir: str = DEFAULT_PERSIST_DIR,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+) -> List[Document]:
+    """
+    Fetch every chunk of a single ingested PDF, in document order.
+
+    Unlike retrieval (which finds chunks similar to a query), this reads
+    the whole document — used for summarization, where "summarize this"
+    has no strong semantic match to any one chunk and similarity search
+    alone would return weak/irrelevant context.
+    """
+    vectorstore = load_vectorstore(
+        collection_name=collection_name,
+        persist_dir=persist_dir,
+        embedding_model=embedding_model,
+    )
+    if vectorstore is None:
+        return []
+
+    raw = vectorstore.get(include=["documents", "metadatas"])
+    documents = [
+        Document(page_content=text, metadata=meta or {})
+        for text, meta in zip(raw.get("documents", []), raw.get("metadatas", []))
+    ]
+    documents.sort(key=lambda d: (d.metadata.get("page", 0), d.metadata.get("chunk_id", 0)))
+    return documents
+
+
 def list_collections(persist_dir: str = DEFAULT_PERSIST_DIR) -> List[str]:
     """List the names of all ingested-PDF collections currently on disk."""
     persist_path = Path(persist_dir)
